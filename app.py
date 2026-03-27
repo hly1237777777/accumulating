@@ -36,9 +36,8 @@ class TacticalScanner:
     def __init__(self, symbols):
         self.symbols = symbols
 
- def fetch_data(self, symbol):
+    def fetch_data(self, symbol):
         try:
-            # 💡 修正 1：換回更穩定的 Ticker 寫法，避免 yfinance 新版 download 的多重欄位問題
             ticker = yf.Ticker(symbol)
             df = ticker.history(period="6mo")
             return df if not df.empty and len(df) >= 50 else None
@@ -46,7 +45,6 @@ class TacticalScanner:
             return None
 
     def calculate_indicators(self, df):
-        # 💡 修正 2：使用 float() 強制轉型，確保取出的絕對是「純數字」，徹底根絕陣列比對錯誤
         last_close = float(df['Close'].iloc[-1])
         
         ema20 = df['Close'].ewm(span=20, adjust=False).mean()
@@ -77,6 +75,7 @@ class TacticalScanner:
             "D": float(d.iloc[-1]), 
             "Bias_20": bias_20
         }
+
     def generate_detailed_reason(self, last):
         close = last['Close']
         if close > last['EMA20'] and last['Hist'] > 0 and 0 < last['Bias_20'] < 5:
