@@ -36,16 +36,19 @@ class TacticalScanner:
     def __init__(self, symbols):
         self.symbols = symbols
 
-    def fetch_data(self, symbol):
+ def fetch_data(self, symbol):
         try:
-            df = yf.download(symbol, period="6mo", interval="1d", progress=False)
+            # 💡 修正 1：換回更穩定的 Ticker 寫法，避免 yfinance 新版 download 的多重欄位問題
+            ticker = yf.Ticker(symbol)
+            df = ticker.history(period="6mo")
             return df if not df.empty and len(df) >= 50 else None
         except:
             return None
 
     def calculate_indicators(self, df):
-        # 核心技術指標運算 (同原邏輯)
-        last_close = df['Close'].iloc[-1]
+        # 💡 修正 2：使用 float() 強制轉型，確保取出的絕對是「純數字」，徹底根絕陣列比對錯誤
+        last_close = float(df['Close'].iloc[-1])
+        
         ema20 = df['Close'].ewm(span=20, adjust=False).mean()
         ema50 = df['Close'].ewm(span=50, adjust=False).mean()
         
@@ -63,13 +66,17 @@ class TacticalScanner:
         d = k.rolling(window=3).mean()
         
         # Bias
-        bias_20 = (last_close - ema20.iloc[-1]) / ema20.iloc[-1] * 100
+        bias_20 = float((last_close - ema20.iloc[-1]) / ema20.iloc[-1] * 100)
         
         return {
-            "Close": last_close, "EMA20": ema20.iloc[-1], "EMA50": ema50.iloc[-1],
-            "Hist": hist.iloc[-1], "K": k.iloc[-1], "D": d.iloc[-1], "Bias_20": bias_20
+            "Close": last_close, 
+            "EMA20": float(ema20.iloc[-1]), 
+            "EMA50": float(ema50.iloc[-1]),
+            "Hist": float(hist.iloc[-1]), 
+            "K": float(k.iloc[-1]), 
+            "D": float(d.iloc[-1]), 
+            "Bias_20": bias_20
         }
-
     def generate_detailed_reason(self, last):
         close = last['Close']
         if close > last['EMA20'] and last['Hist'] > 0 and 0 < last['Bias_20'] < 5:
