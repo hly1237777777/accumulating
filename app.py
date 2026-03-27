@@ -7,18 +7,22 @@ from datetime import datetime
 # --- 頁面配置：手機端建議使用 centered 佈局 ---
 st.set_page_config(page_title="AI 量化指揮中心", layout="centered")
 
-# 股票名稱映射表 (完整保留)
+# 股票名稱映射表 (已新增 LLY, BA, TTD)
 NAME_MAP = {
+    # 台股
     "3711.TW": "日月光投控", "2059.TW": "川湖", "2308.TW": "台達電", 
     "2330.TW": "台積電", "2454.TW": "聯發科", "2317.TW": "鴻海", 
     "3231.TW": "緯創", "2327.TW": "國巨", "2458.TW": "義隆", 
     "6176.TW": "瑞儀", "1708.TW": "東鹼", "2404.TW": "漢唐", 
     "6239.TW": "力成", "3037.TW": "欣興", "2408.TW": "南亞科", "3491.TW": "昇達科",
+    # 日股
     "7733.T": "奧林巴斯", "1540.T": "純金信託", "9432.T": "日本電信電話", 
     "8058.T": "三菱商事", "6501.T": "日立製作所", "4063.T": "信越化學", 
     "1542.T": "純銀信託", "6857.T": "愛德萬測試", "7011.T": "三菱重工", 
     "2644.T": "日股半導體ETF", "8001.T": "伊藤忠商事", "7203.T": "豐田汽車", 
     "7974.T": "任天堂", "1699.T": "野村原油ETF", "1321.T": "日經225ETF",
+    # 美股與 ETF (包含最新加入的標的)
+    "LLY": "禮來", "BA": "波音", "TTD": "The Trade Desk",
     "NVDA": "輝達", "MRVL": "邁威爾科技", "COHR": "科希倫", "GOOGL": "谷歌", 
     "PLUG": "普拉格能源", "NBIS": "Nebius Group", "URNM": "Sprott鈾礦ETF", 
     "PYPL": "PayPal", "MU": "美光科技", "ETN": "伊頓科技", "POW": "日昇新能",
@@ -75,14 +79,14 @@ class TacticalScanner:
         k = 100 * (df['Close'] - low_min) / (high_max - low_min)
         d = k.rolling(window=3).mean()
         
-        # CCI (14) - 補回原有的 CCI 運算
+        # CCI (14)
         tp = (df['High'] + df['Low'] + df['Close']) / 3
         cci = (tp - tp.rolling(14).mean()) / (0.015 * tp.rolling(14).std())
         
         # Bias (20EMA)
         bias_20 = float((last_close - ema20.iloc[-1]) / ema20.iloc[-1] * 100)
         
-        # 統一輸出，並使用 float() 確保資料純粹性防範報錯
+        # 統一輸出，並使用 float() 確保資料純粹性
         return {
             "Close": last_close, 
             "EMA20": float(ema20.iloc[-1]), 
@@ -95,7 +99,6 @@ class TacticalScanner:
         }
 
     def generate_detailed_reason(self, last):
-        """完整還原原有的六大指標複合判斷邏輯"""
         close = last['Close']
         if close > last['EMA20'] and last['Hist'] > 0 and 0 < last['Bias_20'] < 5:
             return "ADD-ON", f"🔥 趨勢向上：站穩 20EMA，乖離率僅 {last['Bias_20']:.2f}%，MACD 柱體持續擴張。"
@@ -135,7 +138,7 @@ if run_scan:
             results.append({
                 "代號": sym, "名稱": NAME_MAP.get(sym, sym),
                 "價格": f"{last['Close']:.2f}", "戰術": zone, "理由": reason,
-                "TV連結": scanner.get_tradingview_link(sym) # 生成專屬連結
+                "TV連結": scanner.get_tradingview_link(sym)
             })
         progress.progress((i + 1) / len(targets))
     
@@ -145,12 +148,10 @@ if run_scan:
         if subset:
             with st.expander(f"{z_name} ({len(subset)})", expanded=True):
                 for item in subset:
-                    # 使用 columns 將文字與按鈕並排，節省手機螢幕空間
                     cols = st.columns([3, 1]) 
                     with cols[0]:
                         st.write(f"**{item['代號']} {item['名稱']}** | 價格: {item['價格']}")
                         st.caption(item['理由'])
                     with cols[1]:
-                        # 原生支援點擊後於新分頁 (New Tab) 開啟
                         st.link_button("📊 圖表", item['TV連結'], use_container_width=True)
                     st.divider()
