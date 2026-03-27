@@ -70,3 +70,87 @@ class TacticalScanner:
         hist = macd - signal
         
         # KD (9, 3)
+        low_min = df['Low'].rolling(window=9).min()
+        high_max = df['High'].rolling(window=9).max()
+        k = 100 * (df['Close'] - low_min) / (high_max - low_min)
+        d = k.rolling(window=3).mean()
+        
+        # CCI (14) - 補回原有的 CCI 運算
+        tp = (df['High'] + df['Low'] + df['Close']) / 3
+        cci = (tp - tp.rolling(14).mean()) / (0.015 * tp.rolling(14).std())
+        
+        # Bias (20EMA)
+        bias_20 = float((last_close - ema20.iloc[-1]) / ema20.iloc[-1] * 100)
+        
+        # 統一輸出，並使用 float() 確保資料純粹性防範報錯
+        return {
+            "Close": last_close, 
+            "EMA20": float(ema20.iloc[-1]), 
+            "EMA50": float(ema50.iloc[-1]),
+            "Hist": float(hist.iloc[-1]), 
+            "K": float(k.iloc[-1]), 
+            "D": float(d.iloc[-1]), 
+            "CCI": float(cci.iloc[-1]),
+            "Bias_20": bias_20
+        }
+
+    def generate_detailed_reason(self, last):
+        """完整還原原有的六大指標複合判斷邏輯"""
+        close = last['Close']
+        if close > last['EMA20'] and last['Hist'] > 0 and 0 < last['Bias_20'] < 5:
+            return "ADD-ON", f"🔥 趨勢向上：站穩 20EMA，乖離率僅 {last['Bias_20']:.2f}%，MACD 柱體持續擴張。"
+        elif last['K'] < 30 and last['K'] > last['D'] and last['CCI'] > -100:
+            return "EXECUTE", f"🎯 底部訊號：KD 低檔交叉(K={last['K']:.1f})，CCI 指標由超賣區反彈。"
+        elif close < last['EMA50'] or (last['K'] > 80 and last['Hist'] < 0):
+            if close < last['EMA50']:
+                return "EVACUATE", f"⚠️ 趨勢破壞：跌破中期均線 50EMA，請注意回撤風險。"
+            else:
+                return "EVACUATE", f"⚠️ 技術背離：高檔超買但動能柱已萎縮。"
+        return "WAIT", "⏳ 監控中：價格在盤整區間，指標暫無明顯偏向。"
+
+# --- UI 介面 ---
+st.title("🛡️ 全球量化戰術中心")
+st.caption(f"數據最後更新: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+with st.sidebar:
+    st.header("📋 股池配置")
+    market_filter = st.multiselect("選擇市場", ["台股", "美股", "日股"], default=["美股", "台股", "日股"])
+    run_scan = st.button("🚀 開始全量化掃描", use_container_width=True)
+
+if run_scan:
+    targets = []
+    if "台股" in market_filter: targets.extend([k for k in NAME_MAP.keys() if ".TW" in k])
+    if "美股" in market_filter: targets.extend([k for k in NAME_MAP.keys() if "." not in k])
+    if "日股" in market_filter: targets.extend([k for k in NAME_MAP.keys() if ".T" in k])
+    
+    scanner = TacticalScanner(targets)
+    results = []
+    
+    progress = st.progress(0)
+    for i, sym in enumerate(targets):
+        df = scanner.fetch_data(sym)
+        if df is not None:
+            last = scanner.calculate_indicators(df)
+            zone, reason = scanner.generate_detailed_reason(last)
+            results.append({
+                "代號": sym, "名稱": NAME_MAP.get(sym, sym),
+                "價格": f"{last['Close']:.2f}", "戰術": zone, "理由": reason,
+                "TV連結": scanner.get_tradingview_link(sym) # 生成專屬連結
+            })
+        progress.progress((i + 1) / len(targets))
+    
+    # 手機版優化佈局：整合圖表按鈕
+    for z_type, z_name, z_color in [("ADD-ON", "🔥 加碼推背區", "blue"), ("EXECUTE", "🎯 進入打擊區", "green"), ("EVACUATE", "⚠️ 風險撤退區", "red")]:
+        subset = [r for r in results if r['戰術'] == z_type]
+        if subset:
+            with st.expander(f"{z_name} ({len(subset)})", expanded=True):
+                for item in subset:
+                    # 使用 columns 將文字與按鈕並排，節省手機螢幕空間
+                    cols = st.columns([3, 1]) 
+                    with cols[0]:
+                        st.write(f"**{item['代號']} {item['名稱']}** | 價格: {item['價格']}")
+                        st.caption(item['理由'])
+                    with cols[1]:
+                        # 原生支援點擊後於新分頁 (New Tab) 開啟
+                        st.link_button("📊 圖表", item['TV連結'], use_container_width=True)
+                    st.divider()
