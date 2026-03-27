@@ -7,7 +7,7 @@ from datetime import datetime
 # --- 頁面配置：手機端建議使用 centered 佈局 ---
 st.set_page_config(page_title="AI 量化指揮中心", layout="centered")
 
-# 股票名稱映射表 (完整保留你提供的標的)
+# 股票名稱映射表 (完整保留)
 NAME_MAP = {
     "3711.TW": "日月光投控", "2059.TW": "川湖", "2308.TW": "台達電", 
     "2330.TW": "台積電", "2454.TW": "聯發科", "2317.TW": "鴻海", 
@@ -36,6 +36,17 @@ class TacticalScanner:
     def __init__(self, symbols):
         self.symbols = symbols
 
+    def get_tradingview_link(self, symbol):
+        """生成 TradingView 連結 (支援跨市場轉換)"""
+        tv_symbol = symbol
+        if ".TW" in symbol:
+            tv_symbol = f"TWSE:{symbol.replace('.TW', '')}"
+        elif ".T" in symbol:
+            tv_symbol = f"TSE:{symbol.replace('.T', '')}"
+        elif "-USD" in symbol:
+            tv_symbol = f"BINANCE:{symbol.replace('-USD', 'USDT')}"
+        return f"https://www.tradingview.com/chart/?symbol={tv_symbol}"
+
     def fetch_data(self, symbol):
         try:
             ticker = yf.Ticker(symbol)
@@ -47,10 +58,11 @@ class TacticalScanner:
     def calculate_indicators(self, df):
         last_close = float(df['Close'].iloc[-1])
         
+        # 均線
         ema20 = df['Close'].ewm(span=20, adjust=False).mean()
         ema50 = df['Close'].ewm(span=50, adjust=False).mean()
         
-        # MACD
+        # MACD (12, 26, 9)
         exp1 = df['Close'].ewm(span=12, adjust=False).mean()
         exp2 = df['Close'].ewm(span=26, adjust=False).mean()
         macd = exp1 - exp2
@@ -58,70 +70,3 @@ class TacticalScanner:
         hist = macd - signal
         
         # KD (9, 3)
-        low_min = df['Low'].rolling(window=9).min()
-        high_max = df['High'].rolling(window=9).max()
-        k = 100 * (df['Close'] - low_min) / (high_max - low_min)
-        d = k.rolling(window=3).mean()
-        
-        # Bias
-        bias_20 = float((last_close - ema20.iloc[-1]) / ema20.iloc[-1] * 100)
-        
-        return {
-            "Close": last_close, 
-            "EMA20": float(ema20.iloc[-1]), 
-            "EMA50": float(ema50.iloc[-1]),
-            "Hist": float(hist.iloc[-1]), 
-            "K": float(k.iloc[-1]), 
-            "D": float(d.iloc[-1]), 
-            "Bias_20": bias_20
-        }
-
-    def generate_detailed_reason(self, last):
-        close = last['Close']
-        if close > last['EMA20'] and last['Hist'] > 0 and 0 < last['Bias_20'] < 5:
-            return "ADD-ON", f"🔥 趨勢向上：站穩 20EMA，乖離率 {last['Bias_20']:.2f}%"
-        elif last['K'] < 30 and last['K'] > last['D']:
-            return "EXECUTE", f"🎯 底部訊號：KD 低檔交叉 (K={last['K']:.1f})"
-        elif close < last['EMA50']:
-            return "EVACUATE", "⚠️ 趨勢破壞：跌破中期 50EMA"
-        return "WAIT", "⏳ 監控中：盤整區間"
-
-# --- UI 介面 ---
-st.title("🛡️ 全球量化戰術中心")
-st.caption(f"數據最後更新: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-with st.sidebar:
-    st.header("📋 股池配置")
-    market_filter = st.multiselect("選擇市場", ["台股", "美股", "日股"], default=["美股", "台股", "日股"])
-    run_scan = st.button("🚀 開始全量化掃描", use_container_width=True)
-
-if run_scan:
-    targets = []
-    if "台股" in market_filter: targets.extend([k for k in NAME_MAP.keys() if ".TW" in k])
-    if "美股" in market_filter: targets.extend([k for k in NAME_MAP.keys() if "." not in k])
-    if "日股" in market_filter: targets.extend([k for k in NAME_MAP.keys() if ".T" in k])
-    
-    scanner = TacticalScanner(targets)
-    results = []
-    
-    progress = st.progress(0)
-    for i, sym in enumerate(targets):
-        df = scanner.fetch_data(sym)
-        if df is not None:
-            last = scanner.calculate_indicators(df)
-            zone, reason = scanner.generate_detailed_reason(last)
-            results.append({
-                "代號": sym, "名稱": NAME_MAP.get(sym, sym),
-                "價格": f"{last['Close']:.2f}", "戰術": zone, "理由": reason
-            })
-        progress.progress((i + 1) / len(targets))
-    
-    # 針對手機版採用摺疊清單顯示
-    for z_type, z_name, z_color in [("ADD-ON", "🔥 加碼區", "blue"), ("EXECUTE", "🎯 打擊區", "green"), ("EVACUATE", "⚠️ 撤退區", "red")]:
-        subset = [r for r in results if r['戰術'] == z_type]
-        if subset:
-            with st.expander(f"{z_name} ({len(subset)})", expanded=True):
-                for item in subset:
-                    st.write(f"**{item['代號']} {item['名稱']}** | {item['價格']}")
-                    st.caption(item['理由'])
-                    st.divider()
