@@ -4,7 +4,7 @@ import numpy as np
 import streamlit as st
 from datetime import datetime
 
-# --- 頁面配置：改為寬螢幕佈局以容納三欄 ---
+# --- 頁面配置 ---
 st.set_page_config(page_title="AI 量化指揮中心", layout="wide")
 
 # --- 巨量擴充版：股票名稱映射表 ---
@@ -72,6 +72,14 @@ NAME_MAP = {
     "SGOL": "abrdn實體黃金ETF", "UGL": "2倍做多黃金ETF"
 }
 
+# --- 戰術區塊底色設定 ---
+ZONE_COLORS = {
+    "ADD-ON": "#FFE4B5",  # 淺橘底色 (Moccasin)
+    "EXECUTE": "#FFC0CB", # 粉紅底色 (Pink)
+    "EVACUATE": "#E0E0E0",# 灰色底色 (Light Gray)
+    "WAIT": "#FFFFFF"     # 白色底色 (White)
+}
+
 class TacticalScanner:
     def __init__(self, symbols):
         self.symbols = symbols
@@ -93,6 +101,10 @@ class TacticalScanner:
 
     def calculate_indicators(self, df):
         last_close = float(df['Close'].iloc[-1])
+        
+        # 抓取近期10日最高點(壓力)與最低點(支撐)供打擊區計算
+        recent_high = float(df['High'].tail(10).max())
+        recent_low = float(df['Low'].tail(10).min())
         
         ema20 = df['Close'].ewm(span=20, adjust=False).mean()
         ema50 = df['Close'].ewm(span=50, adjust=False).mean()
@@ -116,7 +128,8 @@ class TacticalScanner:
         return {
             "Close": last_close, "EMA20": float(ema20.iloc[-1]), "EMA50": float(ema50.iloc[-1]),
             "Hist": float(hist.iloc[-1]), "K": float(k.iloc[-1]), "D": float(d.iloc[-1]), 
-            "CCI": float(cci.iloc[-1]), "Bias_20": bias_20
+            "CCI": float(cci.iloc[-1]), "Bias_20": bias_20,
+            "RecentHigh": recent_high, "RecentLow": recent_low # 新增突破與回測參考點
         }
 
     def generate_detailed_reason(self, last):
@@ -124,11 +137,16 @@ class TacticalScanner:
         if close > last['EMA20'] and last['Hist'] > 0 and 0 < last['Bias_20'] < 5:
             return "ADD-ON", f"🔥 趨勢向上：站穩 20EMA，乖離率僅 {last['Bias_20']:.2f}%，MACD 持續擴張。"
         elif last['K'] < 30 and last['K'] > last['D'] and last['CCI'] > -100:
-            return "EXECUTE", f"🎯 底部訊號：KD 低檔交叉(K={last['K']:.1f})，CCI 指標反彈。"
+            # 加入明確點位提示
+            b_point = last['RecentHigh']
+            s_point = last['RecentLow']
+            reason_html = (f"🎯 底部訊號：KD 交叉且 CCI 反彈。<br>"
+                           f"👉 <b>作戰指令</b>：等待帶量突破 <b>{b_point:.2f}</b> 進場；或掛單 <b>{s_point:.2f}</b> 等待回調低接。")
+            return "EXECUTE", reason_html
         elif close < last['EMA50'] or (last['K'] > 80 and last['Hist'] < 0):
             if close < last['EMA50']: return "EVACUATE", f"⚠️ 趨勢破壞：跌破中期均線 50EMA。"
             else: return "EVACUATE", f"⚠️ 技術背離：高檔超買但動能萎縮。"
-        return "WAIT", "⏳ 監控中：盤整區間。"
+        return "WAIT", "👀 盤整觀望：趨勢混沌，按兵不動等待明確方向。"
 
 # --- UI 介面 ---
 st.title("🛡️ 全球量化戰術中心")
@@ -155,7 +173,6 @@ if run_scan:
             last = scanner.calculate_indicators(df)
             zone, reason = scanner.generate_detailed_reason(last)
             
-            # 判斷所屬市場
             market = "美股"
             if ".TW" in sym: market = "台股"
             elif ".T" in sym: market = "日股"
@@ -169,30 +186,43 @@ if run_scan:
     
     st.markdown("---")
     
-    # 建立左中右三個區塊
     col_tw, col_us, col_jp = st.columns(3)
-    
-    # 定義對應的渲染設定
     markets_ui = [("台股", col_tw, "🇹🇼 台股戰情"), ("美股", col_us, "🇺🇸 美股戰情"), ("日股", col_jp, "🇯🇵 日股戰情")]
+    
+    # 定義要顯示的四個戰術區塊 (包含新增的 WAIT)
+    zones_to_display = [
+        ("ADD-ON", "🔥 加碼推背"), 
+        ("EXECUTE", "🎯 進入打擊"), 
+        ("EVACUATE", "⚠️ 風險撤退"),
+        ("WAIT", "👀 持平觀望(按兵不動)")
+    ]
     
     for m_key, col, m_title in markets_ui:
         with col:
             st.subheader(m_title)
-            # 篩選該市場的結果
             m_results = [r for r in results if r['市場'] == m_key]
             
             if not m_results:
                 st.info("該市場無觸發標的，或未勾選掃描。")
                 continue
             
-            # 依戰術區塊分層顯示
-            for z_type, z_name in [("ADD-ON", "🔥 加碼推背"), ("EXECUTE", "🎯 進入打擊"), ("EVACUATE", "⚠️ 風險撤退")]:
+            for z_type, z_name in zones_to_display:
                 subset = [r for r in m_results if r['戰術'] == z_type]
                 if subset:
-                    with st.expander(f"{z_name} ({len(subset)})", expanded=True):
+                    # 使用 expander 收納，內部使用 HTML 卡片上色
+                    with st.expander(f"{z_name} ({len(subset)})", expanded=(z_type != "WAIT")):
                         for item in subset:
-                            st.markdown(f"**{item['代號']} {item['名稱']}**")
-                            st.write(f"價格: {item['價格']}")
-                            st.caption(item['理由'])
-                            st.link_button("📊 圖表", item['TV連結'], use_container_width=True)
-                            st.divider()
+                            bg_color = ZONE_COLORS.get(z_type, "#FFFFFF")
+                            
+                            # HTML/CSS 卡片設計 (強制文字深色以適配深色模式)
+                            html_card = f"""
+                            <div style="background-color: {bg_color}; padding: 12px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #ccc; color: #222; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                    <h4 style="margin: 0; color: #111; font-size: 16px;">{item['代號']} {item['名稱']}</h4>
+                                    <a href="{item['TV連結']}" target="_blank" style="background-color: #007BFF; color: white; padding: 4px 10px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 12px;">📊 圖表</a>
+                                </div>
+                                <div style="font-size: 15px; font-weight: bold; margin-bottom: 5px;">最新價格: {item['價格']}</div>
+                                <div style="font-size: 14px; line-height: 1.4;">{item['理由']}</div>
+                            </div>
+                            """
+                            st.markdown(html_card, unsafe_allow_html=True)
