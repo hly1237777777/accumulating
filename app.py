@@ -2,6 +2,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import streamlit as st
+import time
 from datetime import datetime
 
 # --- 頁面配置 ---
@@ -74,11 +75,25 @@ NAME_MAP = {
 
 # --- 戰術區塊底色設定 ---
 ZONE_COLORS = {
-    "ADD-ON": "#FFE4B5",  # 淺橘底色 (Moccasin)
-    "EXECUTE": "#FFC0CB", # 粉紅底色 (Pink)
-    "EVACUATE": "#E0E0E0",# 灰色底色 (Light Gray)
-    "WAIT": "#FFFFFF"     # 白色底色 (White)
+    "ADD-ON": "#FFE4B5",  # 淺橘
+    "EXECUTE": "#FFC0CB", # 粉紅
+    "EVACUATE": "#E0E0E0",# 灰色
+    "WAIT": "#FFFFFF"     # 白色
 }
+
+# 💡 導入一小時記憶快取與重試機制，大幅降低 API 漏接機率
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_stock_data_cached(symbol):
+    for attempt in range(3): # 最多嘗試 3 次
+        try:
+            ticker = yf.Ticker(symbol)
+            df = ticker.history(period="6mo")
+            if not df.empty and len(df) >= 50:
+                return df
+        except:
+            pass
+        time.sleep(0.3) # 失敗時暫停 0.3 秒再試
+    return None
 
 class TacticalScanner:
     def __init__(self, symbols):
@@ -91,18 +106,9 @@ class TacticalScanner:
         elif "-USD" in symbol: tv_symbol = f"BINANCE:{symbol.replace('-USD', 'USDT')}"
         return f"https://www.tradingview.com/chart/?symbol={tv_symbol}"
 
-    def fetch_data(self, symbol):
-        try:
-            ticker = yf.Ticker(symbol)
-            df = ticker.history(period="6mo")
-            return df if not df.empty and len(df) >= 50 else None
-        except:
-            return None
-
     def calculate_indicators(self, df):
         last_close = float(df['Close'].iloc[-1])
         
-        # 抓取近期10日最高點(壓力)與最低點(支撐)供打擊區計算
         recent_high = float(df['High'].tail(10).max())
         recent_low = float(df['Low'].tail(10).min())
         
@@ -129,7 +135,7 @@ class TacticalScanner:
             "Close": last_close, "EMA20": float(ema20.iloc[-1]), "EMA50": float(ema50.iloc[-1]),
             "Hist": float(hist.iloc[-1]), "K": float(k.iloc[-1]), "D": float(d.iloc[-1]), 
             "CCI": float(cci.iloc[-1]), "Bias_20": bias_20,
-            "RecentHigh": recent_high, "RecentLow": recent_low # 新增突破與回測參考點
+            "RecentHigh": recent_high, "RecentLow": recent_low
         }
 
     def generate_detailed_reason(self, last):
@@ -137,7 +143,6 @@ class TacticalScanner:
         if close > last['EMA20'] and last['Hist'] > 0 and 0 < last['Bias_20'] < 5:
             return "ADD-ON", f"🔥 趨勢向上：站穩 20EMA，乖離率僅 {last['Bias_20']:.2f}%，MACD 持續擴張。"
         elif last['K'] < 30 and last['K'] > last['D'] and last['CCI'] > -100:
-            # 加入明確點位提示
             b_point = last['RecentHigh']
             s_point = last['RecentLow']
             reason_html = (f"🎯 底部訊號：KD 交叉且 CCI 反彈。<br>"
@@ -159,29 +164,34 @@ with st.sidebar:
 
 if run_scan:
     targets = []
-    if "台股" in market_filter: targets.extend([k for k in NAME_MAP.keys() if ".TW" in k])
-    if "美股" in market_filter: targets.extend([k for k in NAME_MAP.keys() if "." not in k])
-    if "日股" in market_filter: targets.extend([k for k in NAME_MAP.keys() if ".T" in k])
+    # 💡 修正字串比對 Bug：改用 endswith() 精準確認結尾
+    if "台股" in market_filter: targets.extend([k for k in NAME_MAP.keys() if k.endswith(".TW")])
+    if "美股" in market_filter: targets.extend([k for k in NAME_MAP.keys() if not k.endswith(".TW") and not k.endswith(".T")])
+    if "日股" in market_filter: targets.extend([k for k in NAME_MAP.keys() if k.endswith(".T")])
     
     scanner = TacticalScanner(targets)
     results = []
+    failed_symbols = [] # 記錄抓取失敗的標的
     
     progress = st.progress(0)
     for i, sym in enumerate(targets):
-        df = scanner.fetch_data(sym)
+        df = fetch_stock_data_cached(sym)
         if df is not None:
             last = scanner.calculate_indicators(df)
             zone, reason = scanner.generate_detailed_reason(last)
             
             market = "美股"
-            if ".TW" in sym: market = "台股"
-            elif ".T" in sym: market = "日股"
+            if sym.endswith(".TW"): market = "台股"
+            elif sym.endswith(".T"): market = "日股"
 
             results.append({
                 "市場": market, "代號": sym, "名稱": NAME_MAP.get(sym, sym),
                 "價格": f"{last['Close']:.2f}", "戰術": zone, "理由": reason,
                 "TV連結": scanner.get_tradingview_link(sym)
             })
+        else:
+            failed_symbols.append(sym)
+            
         progress.progress((i + 1) / len(targets))
     
     st.markdown("---")
@@ -189,7 +199,6 @@ if run_scan:
     col_tw, col_us, col_jp = st.columns(3)
     markets_ui = [("台股", col_tw, "🇹🇼 台股戰情"), ("美股", col_us, "🇺🇸 美股戰情"), ("日股", col_jp, "🇯🇵 日股戰情")]
     
-    # 定義要顯示的四個戰術區塊 (包含新增的 WAIT)
     zones_to_display = [
         ("ADD-ON", "🔥 加碼推背"), 
         ("EXECUTE", "🎯 進入打擊"), 
@@ -209,12 +218,10 @@ if run_scan:
             for z_type, z_name in zones_to_display:
                 subset = [r for r in m_results if r['戰術'] == z_type]
                 if subset:
-                    # 使用 expander 收納，內部使用 HTML 卡片上色
                     with st.expander(f"{z_name} ({len(subset)})", expanded=(z_type != "WAIT")):
                         for item in subset:
                             bg_color = ZONE_COLORS.get(z_type, "#FFFFFF")
                             
-                            # HTML/CSS 卡片設計 (強制文字深色以適配深色模式)
                             html_card = f"""
                             <div style="background-color: {bg_color}; padding: 12px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #ccc; color: #222; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);">
                                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
@@ -226,3 +233,8 @@ if run_scan:
                             </div>
                             """
                             st.markdown(html_card, unsafe_allow_html=True)
+                            
+    # 💡 提示使用者哪些股票因為網路或 API 限制而漏抓
+    if failed_symbols:
+        failed_names = [NAME_MAP.get(s, s) for s in failed_symbols]
+        st.warning(f"⚠️ **網路延遲或 API 阻擋，以下 {len(failed_symbols)} 檔標的本次暫無數據：**\n{', '.join(failed_names)}\n\n*提示：系統已建立快取機制，您可以再次點擊「開始掃描」以補齊這些遺漏的標的。*")
