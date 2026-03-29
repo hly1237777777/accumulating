@@ -107,8 +107,21 @@ class TacticalScanner:
         return f"https://www.tradingview.com/chart/?symbol={tv_symbol}"
 
     def calculate_indicators(self, df):
+        # 1. 基礎收盤價與昨日收盤價 (判斷穿越必備)
         last_close = float(df['Close'].iloc[-1])
+        prev_close = float(df['Close'].iloc[-2])
         
+        # 2. 新增：23日均線 (SMA)
+        ma23 = df['Close'].rolling(window=23).mean()
+        last_ma23 = float(ma23.iloc[-1])
+        prev_ma23 = float(ma23.iloc[-2])
+        
+        # 3. 新增：成交量與 5日均量
+        last_vol = float(df['Volume'].iloc[-1])
+        vol_5ma = df['Volume'].rolling(window=5).mean()
+        last_vol_5ma = float(vol_5ma.iloc[-1])
+        
+        # 4. 原有指標計算維持不變
         recent_high = float(df['High'].tail(10).max())
         recent_low = float(df['Low'].tail(10).min())
         
@@ -132,7 +145,10 @@ class TacticalScanner:
         bias_20 = float((last_close - ema20.iloc[-1]) / ema20.iloc[-1] * 100)
         
         return {
-            "Close": last_close, "EMA20": float(ema20.iloc[-1]), "EMA50": float(ema50.iloc[-1]),
+            "Close": last_close, "Prev_Close": prev_close,
+            "MA23": last_ma23, "Prev_MA23": prev_ma23,
+            "Volume": last_vol, "Vol_5MA": last_vol_5ma,
+            "EMA20": float(ema20.iloc[-1]), "EMA50": float(ema50.iloc[-1]),
             "Hist": float(hist.iloc[-1]), "K": float(k.iloc[-1]), "D": float(d.iloc[-1]), 
             "CCI": float(cci.iloc[-1]), "Bias_20": bias_20,
             "RecentHigh": recent_high, "RecentLow": recent_low
@@ -140,6 +156,21 @@ class TacticalScanner:
 
     def generate_detailed_reason(self, last):
         close = last['Close']
+        
+        # 💡 新增：核心戰術判斷邏輯 - 帶量突破 23MA
+        # 條件 1：今天收盤大於 23MA，且昨天收盤小於等於 23MA (由下往上貫穿)
+        is_breakout = (close > last['MA23']) and (last['Prev_Close'] <= last['Prev_MA23'])
+        # 條件 2：今天成交量大於 5日均量的 1.2 倍
+        is_volume_surge = last['Volume'] > (1.2 * last['Vol_5MA'])
+        
+        # 將帶量突破設為最優先級別的「打擊區」訊號
+        if is_breakout and is_volume_surge:
+            vol_ratio = last['Volume'] / last['Vol_5MA'] if last['Vol_5MA'] > 0 else 0
+            reason_html = (f"🚀 <b>強勢表態：帶量突破 23MA</b><br>"
+                           f"👉 股價貫穿生命線 {last['MA23']:.2f}，且成交量放大至均量的 <b>{vol_ratio:.2f} 倍</b>，主力進場點火！")
+            return "EXECUTE", reason_html
+
+        # 以下維持原有的戰術區塊判斷
         if close > last['EMA20'] and last['Hist'] > 0 and 0 < last['Bias_20'] < 5:
             return "ADD-ON", f"🔥 趨勢向上：站穩 20EMA，乖離率僅 {last['Bias_20']:.2f}%，MACD 持續擴張。"
         elif last['K'] < 30 and last['K'] > last['D'] and last['CCI'] > -100:
@@ -151,6 +182,7 @@ class TacticalScanner:
         elif close < last['EMA50'] or (last['K'] > 80 and last['Hist'] < 0):
             if close < last['EMA50']: return "EVACUATE", f"⚠️ 趨勢破壞：跌破中期均線 50EMA。"
             else: return "EVACUATE", f"⚠️ 技術背離：高檔超買但動能萎縮。"
+            
         return "WAIT", "👀 盤整觀望：趨勢混沌，按兵不動等待明確方向。"
 
 # --- UI 介面 ---
