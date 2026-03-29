@@ -4,12 +4,12 @@ import numpy as np
 import streamlit as st
 from datetime import datetime
 
-# --- 頁面配置 ---
-st.set_page_config(page_title="AI 量化指揮中心", layout="centered")
+# --- 頁面配置：改為寬螢幕佈局以容納三欄 ---
+st.set_page_config(page_title="AI 量化指揮中心", layout="wide")
 
 # --- 巨量擴充版：股票名稱映射表 ---
 NAME_MAP = {
-    # 🌟 原有 + 新增台股 (百大強勢/熱門成值週轉標的)
+    # 台股 
     "2330.TW": "台積電", "2308.TW": "台達電", "2454.TW": "聯發科", "2317.TW": "鴻海", 
     "3231.TW": "緯創", "2327.TW": "國巨", "2458.TW": "義隆", "6176.TW": "瑞儀", 
     "1708.TW": "東鹼", "2404.TW": "漢唐", "6239.TW": "力成", "3037.TW": "欣興", 
@@ -44,7 +44,7 @@ NAME_MAP = {
     "6139.TW": "亞翔", "1303.TW": "南亞", "5274.TW": "信驊", "5347.TW": "世界", 
     "7769.TW": "鴻勁", "2303.TW": "聯電", "8996.TW": "高力",
     
-    # 🌟 原有 + 新增日股 (成交量前排標的)
+    # 日股
     "7733.T": "奧林巴斯", "1540.T": "純金信託", "9432.T": "日本電信電話", 
     "8058.T": "三菱商事", "6501.T": "日立製作所", "4063.T": "信越化學", 
     "1542.T": "純銀信託", "6857.T": "愛德萬測試", "7011.T": "三菱重工", 
@@ -58,7 +58,7 @@ NAME_MAP = {
     "7211.T": "三菱汽車", "6366.T": "千代田化工", "9831.T": "山田控股", "8766.T": "東京海上",
     "8750.T": "第一生命", "8031.T": "三井物產",
 
-    # 🌟 美股與 ETF (維持不變)
+    # 美股與 ETF 
     "LLY": "禮來", "BA": "波音", "TTD": "The Trade Desk",
     "NVDA": "輝達", "MRVL": "邁威爾科技", "COHR": "科希倫", "GOOGL": "谷歌", 
     "PLUG": "普拉格能源", "NBIS": "Nebius Group", "URNM": "Sprott鈾礦ETF", 
@@ -136,7 +136,7 @@ st.caption(f"數據最後更新: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 
 with st.sidebar:
     st.header("📋 股池配置")
-    market_filter = st.multiselect("選擇市場", ["台股", "美股", "日股"], default=["美股", "台股", "日股"])
+    market_filter = st.multiselect("選擇市場", ["台股", "美股", "日股"], default=["台股", "美股", "日股"])
     run_scan = st.button("🚀 開始全量化掃描", use_container_width=True)
 
 if run_scan:
@@ -154,22 +154,45 @@ if run_scan:
         if df is not None:
             last = scanner.calculate_indicators(df)
             zone, reason = scanner.generate_detailed_reason(last)
+            
+            # 判斷所屬市場
+            market = "美股"
+            if ".TW" in sym: market = "台股"
+            elif ".T" in sym: market = "日股"
+
             results.append({
-                "代號": sym, "名稱": NAME_MAP.get(sym, sym),
+                "市場": market, "代號": sym, "名稱": NAME_MAP.get(sym, sym),
                 "價格": f"{last['Close']:.2f}", "戰術": zone, "理由": reason,
                 "TV連結": scanner.get_tradingview_link(sym)
             })
         progress.progress((i + 1) / len(targets))
     
-    for z_type, z_name, z_color in [("ADD-ON", "🔥 加碼推背區", "blue"), ("EXECUTE", "🎯 進入打擊區", "green"), ("EVACUATE", "⚠️ 風險撤退區", "red")]:
-        subset = [r for r in results if r['戰術'] == z_type]
-        if subset:
-            with st.expander(f"{z_name} ({len(subset)})", expanded=True):
-                for item in subset:
-                    cols = st.columns([3, 1]) 
-                    with cols[0]:
-                        st.write(f"**{item['代號']} {item['名稱']}** | 價格: {item['價格']}")
-                        st.caption(item['理由'])
-                    with cols[1]:
-                        st.link_button("📊 圖表", item['TV連結'], use_container_width=True)
-                    st.divider()
+    st.markdown("---")
+    
+    # 建立左中右三個區塊
+    col_tw, col_us, col_jp = st.columns(3)
+    
+    # 定義對應的渲染設定
+    markets_ui = [("台股", col_tw, "🇹🇼 台股戰情"), ("美股", col_us, "🇺🇸 美股戰情"), ("日股", col_jp, "🇯🇵 日股戰情")]
+    
+    for m_key, col, m_title in markets_ui:
+        with col:
+            st.subheader(m_title)
+            # 篩選該市場的結果
+            m_results = [r for r in results if r['市場'] == m_key]
+            
+            if not m_results:
+                st.info("該市場無觸發標的，或未勾選掃描。")
+                continue
+            
+            # 依戰術區塊分層顯示
+            for z_type, z_name in [("ADD-ON", "🔥 加碼推背"), ("EXECUTE", "🎯 進入打擊"), ("EVACUATE", "⚠️ 風險撤退")]:
+                subset = [r for r in m_results if r['戰術'] == z_type]
+                if subset:
+                    with st.expander(f"{z_name} ({len(subset)})", expanded=True):
+                        for item in subset:
+                            st.markdown(f"**{item['代號']} {item['名稱']}**")
+                            st.write(f"價格: {item['價格']}")
+                            st.caption(item['理由'])
+                            st.link_button("📊 圖表", item['TV連結'], use_container_width=True)
+                            st.divider()
