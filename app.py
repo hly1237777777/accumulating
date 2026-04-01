@@ -6,11 +6,11 @@ import time
 from datetime import datetime
 
 # --- 頁面配置 ---
-st.set_page_config(page_title="AI 量化指揮中心", layout="wide")
+st.set_page_config(page_title="AI 量價波段指揮中心", layout="wide")
 
-# --- 巨量擴充版：股票名稱映射表 ---
+# --- 巨量擴充版：股票名稱映射表 (已補齊美股科技巨頭與高周轉標的) ---
 NAME_MAP = {
-    # 台股 
+    # 台股 (維持原狀)
     "2330.TW": "台積電", "2308.TW": "台達電", "2454.TW": "聯發科", "2317.TW": "鴻海", 
     "3231.TW": "緯創", "2327.TW": "國巨", "2458.TW": "義隆", "6176.TW": "瑞儀", 
     "1708.TW": "東鹼", "2404.TW": "漢唐", "6239.TW": "力成", "3037.TW": "欣興", 
@@ -45,7 +45,7 @@ NAME_MAP = {
     "6139.TW": "亞翔", "1303.TW": "南亞", "5274.TW": "信驊", "5347.TW": "世界", 
     "7769.TW": "鴻勁", "2303.TW": "聯電", "8996.TW": "高力",
     
-    # 日股
+    # 日股 (維持原狀)
     "7733.T": "奧林巴斯", "1540.T": "純金信託", "9432.T": "日本電信電話", 
     "8058.T": "三菱商事", "6501.T": "日立製作所", "4063.T": "信越化學", 
     "1542.T": "純銀信託", "6857.T": "愛德萬測試", "7011.T": "三菱重工", 
@@ -59,32 +59,31 @@ NAME_MAP = {
     "7211.T": "三菱汽車", "6366.T": "千代田化工", "9831.T": "山田控股", "8766.T": "東京海上",
     "8750.T": "第一生命", "8031.T": "三井物產",
 
-    # 美股與 ETF 
-    "LLY": "禮來", "BA": "波音", "TTD": "The Trade Desk",
-    "NVDA": "輝達", "MRVL": "邁威爾科技", "COHR": "科希倫", "GOOGL": "谷歌", 
-    "PLUG": "普拉格能源", "NBIS": "Nebius Group", "URNM": "Sprott鈾礦ETF", 
-    "PYPL": "PayPal", "MU": "美光科技", "ETN": "伊頓科技", "POW": "日昇新能",
+    # 美股與 ETF (重裝加入 Mega Caps 與高周轉標的)
+    "NVDA": "輝達", "TSLA": "特斯拉", "AAPL": "蘋果", "AMD": "超微半導體", "META": "Meta(臉書)",
+    "MSFT": "微軟", "AMZN": "亞馬遜", "GOOGL": "谷歌", "NFLX": "網飛", "AVGO": "博通",
+    "LLY": "禮來", "BA": "波音", "TTD": "The Trade Desk", "QQQ": "納斯達克ETF",
+    "MRVL": "邁威爾科技", "COHR": "科希倫", "PLUG": "普拉格能源", "NBIS": "Nebius Group", 
+    "URNM": "Sprott鈾礦ETF", "PYPL": "PayPal", "MU": "美光科技", "ETN": "伊頓科技", "POW": "日昇新能",
     "LMT": "洛克希德馬丁", "NOC": "諾格", "GLW": "康寧", "GEV": "GE Vernova", 
     "VRT": "維諦技術", "PLTR": "帕蘭提爾", "RKLB": "火箭實驗室", "AAOI": "應用光電", 
     "TNDM": "Tandem醫療", "DAC": "德納斯", "ONDS": "昂達斯", "TSM": "台積電ADR", 
-    "AAPL": "蘋果", "MSFT": "微軟", "SPY": "標普500ETF", "SOFI": "SoFi科技", 
-    "DIS": "迪士尼", "BIDU": "百度", "XOP": "標普油氣開採ETF", "VDE": "先鋒能源ETF", 
-    "XLE": "能源板塊SPDR", "DOG": "道指反向ETF", "PSQ": "納指反向ETF",
-    "SGOL": "abrdn實體黃金ETF", "UGL": "2倍做多黃金ETF"
+    "SPY": "標普500ETF", "SOFI": "SoFi科技", "DIS": "迪士尼", "BIDU": "百度", 
+    "XOP": "標普油氣開採ETF", "VDE": "先鋒能源ETF", "XLE": "能源板塊SPDR", 
+    "DOG": "道指反向ETF", "PSQ": "納指反向ETF", "SGOL": "實體黃金ETF", "UGL": "2倍做多黃金"
 }
 
 # --- 戰術區塊底色設定 ---
 ZONE_COLORS = {
-    "ADD-ON": "#FFE4B5",  # 淺橘
-    "EXECUTE": "#FFC0CB", # 粉紅
-    "EVACUATE": "#E0E0E0",# 灰色
-    "WAIT": "#FFFFFF"     # 白色
+    "EXECUTE": "#FFC0CB", # 粉紅 (打擊區)
+    "HOLD": "#FFE4B5",    # 淺橘 (持倉續抱區，取代原本的 ADD-ON)
+    "EVACUATE": "#E0E0E0",# 灰色 (出貨/停損撤退區)
+    "WAIT": "#FFFFFF"     # 白色 (觀望區)
 }
 
-# 💡 導入一小時記憶快取與重試機制，大幅降低 API 漏接機率
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_stock_data_cached(symbol):
-    for attempt in range(3): # 最多嘗試 3 次
+    for attempt in range(3):
         try:
             ticker = yf.Ticker(symbol)
             df = ticker.history(period="6mo")
@@ -92,7 +91,7 @@ def fetch_stock_data_cached(symbol):
                 return df
         except:
             pass
-        time.sleep(0.3) # 失敗時暫停 0.3 秒再試
+        time.sleep(0.3)
     return None
 
 class TacticalScanner:
@@ -107,103 +106,118 @@ class TacticalScanner:
         return f"https://www.tradingview.com/chart/?symbol={tv_symbol}"
 
     def calculate_indicators(self, df):
-        # 1. 基礎收盤價與昨日收盤價 (判斷穿越必備)
+        # 取得最新與昨日價格
         last_close = float(df['Close'].iloc[-1])
-        prev_close = float(df['Close'].iloc[-2])
+        open_p = float(df['Open'].iloc[-1])
+        high_p = float(df['High'].iloc[-1])
+        low_p = float(df['Low'].iloc[-1])
         
-        # 2. 新增：23日均線 (SMA)
-        ma23 = df['Close'].rolling(window=23).mean()
-        last_ma23 = float(ma23.iloc[-1])
-        prev_ma23 = float(ma23.iloc[-2])
+        # 均線系統 (10, 20, 50 SMA)
+        sma10 = float(df['Close'].rolling(window=10).mean().iloc[-1])
+        sma20 = float(df['Close'].rolling(window=20).mean().iloc[-1])
+        sma50 = float(df['Close'].rolling(window=50).mean().iloc[-1])
         
-        # 3. 新增：成交量與 5日均量
+        # 量能系統 (VPA 核心)
         last_vol = float(df['Volume'].iloc[-1])
-        vol_5ma = df['Volume'].rolling(window=5).mean()
-        last_vol_5ma = float(vol_5ma.iloc[-1])
+        vol_50ma = float(df['Volume'].rolling(window=50).mean().iloc[-1])
+        vol_ratio = last_vol / vol_50ma if vol_50ma > 0 else 0
         
-        # 4. 原有指標計算維持不變
-        recent_high = float(df['High'].tail(10).max())
-        recent_low = float(df['Low'].tail(10).min())
+        # K線實體與影線分析
+        body = abs(last_close - open_p)
+        upper_shadow = high_p - max(open_p, last_close)
+        lower_shadow = min(open_p, last_close) - low_p
         
-        ema20 = df['Close'].ewm(span=20, adjust=False).mean()
-        ema50 = df['Close'].ewm(span=50, adjust=False).mean()
-        
+        # 輔助技術指標 (KD/MACD 退居二線輔助)
         exp1 = df['Close'].ewm(span=12, adjust=False).mean()
         exp2 = df['Close'].ewm(span=26, adjust=False).mean()
         macd = exp1 - exp2
         signal = macd.ewm(span=9, adjust=False).mean()
-        hist = macd - signal
+        hist = float((macd - signal).iloc[-1])
         
         low_min = df['Low'].rolling(window=9).min()
         high_max = df['High'].rolling(window=9).max()
-        k = 100 * (df['Close'] - low_min) / (high_max - low_min)
-        d = k.rolling(window=3).mean()
+        k = float((100 * (df['Close'] - low_min) / (high_max - low_min)).iloc[-1])
         
-        tp = (df['High'] + df['Low'] + df['Close']) / 3
-        cci = (tp - tp.rolling(14).mean()) / (0.015 * tp.rolling(14).std())
-        
-        bias_20 = float((last_close - ema20.iloc[-1]) / ema20.iloc[-1] * 100)
+        recent_high = float(df['High'].tail(10).max())
         
         return {
-            "Close": last_close, "Prev_Close": prev_close,
-            "MA23": last_ma23, "Prev_MA23": prev_ma23,
-            "Volume": last_vol, "Vol_5MA": last_vol_5ma,
-            "EMA20": float(ema20.iloc[-1]), "EMA50": float(ema50.iloc[-1]),
-            "Hist": float(hist.iloc[-1]), "K": float(k.iloc[-1]), "D": float(d.iloc[-1]), 
-            "CCI": float(cci.iloc[-1]), "Bias_20": bias_20,
-            "RecentHigh": recent_high, "RecentLow": recent_low
+            "Close": last_close, "Open": open_p, "High": high_p, "Low": low_p,
+            "SMA10": sma10, "SMA20": sma20, "SMA50": sma50,
+            "Volume": last_vol, "Vol_50MA": vol_50ma, "Vol_Ratio": vol_ratio,
+            "Body": body, "UpperShadow": upper_shadow, "LowerShadow": lower_shadow,
+            "Hist": hist, "K": k, "RecentHigh": recent_high
         }
 
     def generate_detailed_reason(self, last):
-        close = last['Close']
+        c = last['Close']
+        o = last['Open']
         
-        # 💡 新增：核心戰術判斷邏輯 - 帶量突破 23MA
-        # 條件 1：今天收盤大於 23MA，且昨天收盤小於等於 23MA (由下往上貫穿)
-        is_breakout = (close > last['MA23']) and (last['Prev_Close'] <= last['Prev_MA23'])
-        # 條件 2：今天成交量大於 5日均量的 1.2 倍
-        is_volume_surge = last['Volume'] > (1.2 * last['Vol_5MA'])
-        
-        # 將帶量突破設為最優先級別的「打擊區」訊號
-        if is_breakout and is_volume_surge:
-            vol_ratio = last['Volume'] / last['Vol_5MA'] if last['Vol_5MA'] > 0 else 0
-            reason_html = (f"🚀 <b>強勢表態：帶量突破 23MA</b><br>"
-                           f"👉 股價貫穿生命線 {last['MA23']:.2f}，且成交量放大至均量的 <b>{vol_ratio:.2f} 倍</b>，主力進場點火！")
-            return "EXECUTE", reason_html
+        # ---------------------------------------------------------
+        # 大戶出貨訊號 (最高優先級：EVACUATE)
+        # ---------------------------------------------------------
+        # 1. 爆出天量 (>1.5倍) 但收黑，或留長上影線 (上影線大於實體1.5倍)
+        is_distribution = last['Vol_Ratio'] > 1.5 and (c < o or last['UpperShadow'] > last['Body'] * 1.5)
+        # 2. 帶量跌破 50日均線 (絕對停損)
+        is_break_support = c < last['SMA50'] and last['Vol_Ratio'] > 1.0
 
-        # 以下維持原有的戰術區塊判斷
-        if close > last['EMA20'] and last['Hist'] > 0 and 0 < last['Bias_20'] < 5:
-            return "ADD-ON", f"🔥 趨勢向上：站穩 20EMA，乖離率僅 {last['Bias_20']:.2f}%，MACD 持續擴張。"
-        elif last['K'] < 30 and last['K'] > last['D'] and last['CCI'] > -100:
-            b_point = last['RecentHigh']
-            s_point = last['RecentLow']
-            reason_html = (f"🎯 底部訊號：KD 交叉且 CCI 反彈。<br>"
-                           f"👉 <b>作戰指令</b>：等待帶量突破 <b>{b_point:.2f}</b> 進場；或掛單 <b>{s_point:.2f}</b> 等待回調低接。")
-            return "EXECUTE", reason_html
-        elif close < last['EMA50'] or (last['K'] > 80 and last['Hist'] < 0):
-            if close < last['EMA50']: return "EVACUATE", f"⚠️ 趨勢破壞：跌破中期均線 50EMA。"
-            else: return "EVACUATE", f"⚠️ 技術背離：高檔超買但動能萎縮。"
+        if is_distribution or is_break_support:
+            if is_distribution:
+                reason = f"⚠️ <b>大戶派發警示</b>：高檔爆出 {last['Vol_Ratio']:.1f} 倍均量且收黑/留長上影線，主力疑似出貨，應立即獲利了結或減碼。"
+            else:
+                reason = f"⚠️ <b>破線停損</b>：股價已跌破 50MA 多空分水嶺，波段趨勢轉弱，請嚴格執行紀律出場。"
+            return "EVACUATE", reason
+
+        # ---------------------------------------------------------
+        # 買方打擊區 (VPA 吸籌與拉升：EXECUTE)
+        # ---------------------------------------------------------
+        # 策略 A：VCP/頸線 帶量突破 (股價在50MA之上，成交量>1.5倍均量，且收紅K)
+        is_markup = c > last['SMA50'] and c > last['SMA20'] and last['Vol_Ratio'] > 1.5 and c > o
+        
+        # 策略 B：均線量縮回踩 (股價在50MA之上，回踩20MA約 2% 內，成交量急縮<0.8倍，有下影線或收紅止跌)
+        dist_to_20ma = abs(c - last['SMA20']) / last['SMA20']
+        is_pullback = c > last['SMA50'] and dist_to_20ma < 0.02 and last['Vol_Ratio'] < 0.8 and (last['LowerShadow'] > last['Body'] or c > o)
+
+        if is_markup:
+            reason = (f"🎯 <b>策略A (量增價漲突破)</b>：大戶點火！股價站上均線且爆出 <b>{last['Vol_Ratio']:.1f} 倍</b> 成交量。<br>"
+                      f"🛡️ <b>實戰紀律</b>：獲利達 15% 分批停利；防守點設於買入價 -5% 至 -8%。")
+            return "EXECUTE", reason
             
-        return "WAIT", "👀 盤整觀望：趨勢混沌，按兵不動等待明確方向。"
+        if is_pullback:
+            reason = (f"🎯 <b>策略B (量縮回踩 20MA)</b>：洗盤特徵！股價回測生命線 {last['SMA20']:.2f}，成交量極度萎縮至 <b>{last['Vol_Ratio']:.2f} 倍</b>，籌碼安定。<br>"
+                      f"🛡️ <b>實戰紀律</b>：此處低接勝率高，防守點設於帶量突破K線的低點或跌破 50MA 出場。")
+            return "EXECUTE", reason
+
+        # ---------------------------------------------------------
+        # 移動停利區 (順勢抱牢：HOLD)
+        # ---------------------------------------------------------
+        # 股價沿著 10MA 或 20MA 穩健走高，未見出貨爆量
+        if c > last['SMA20']:
+            reason = f"🔥 <b>波段續抱</b>：股價站穩 20MA ({last['SMA20']:.2f}) 之上，趨勢健康。請沿 10MA/20MA 執行移動停利，讓利潤奔跑。"
+            return "HOLD", reason
+
+        # ---------------------------------------------------------
+        # 盤整觀望 (WAIT)
+        # ---------------------------------------------------------
+        return "WAIT", "👀 <b>整理階段</b>：無明顯大戶吸籌或突破訊號，資金效率低，按兵不動。"
 
 # --- UI 介面 ---
-st.title("🛡️ 全球量化戰術中心")
-st.caption(f"數據最後更新: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+st.title("🛡️ AI 量價波段指揮中心 (VPA Swing Trading)")
+st.caption(f"數據最後更新: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | 核心邏輯：10-60日波段 / 量價分析 (VPA) / 大型股流動性優先")
 
 with st.sidebar:
     st.header("📋 股池配置")
-    market_filter = st.multiselect("選擇市場", ["台股", "美股", "日股"], default=["台股", "美股", "日股"])
-    run_scan = st.button("🚀 開始全量化掃描", use_container_width=True)
+    market_filter = st.multiselect("選擇市場", ["美股", "台股", "日股"], default=["美股", "台股"])
+    run_scan = st.button("🚀 開始 VPA 全量化掃描", use_container_width=True)
 
 if run_scan:
     targets = []
-    # 💡 修正字串比對 Bug：改用 endswith() 精準確認結尾
     if "台股" in market_filter: targets.extend([k for k in NAME_MAP.keys() if k.endswith(".TW")])
     if "美股" in market_filter: targets.extend([k for k in NAME_MAP.keys() if not k.endswith(".TW") and not k.endswith(".T")])
     if "日股" in market_filter: targets.extend([k for k in NAME_MAP.keys() if k.endswith(".T")])
     
     scanner = TacticalScanner(targets)
     results = []
-    failed_symbols = [] # 記錄抓取失敗的標的
+    failed_symbols = []
     
     progress = st.progress(0)
     for i, sym in enumerate(targets):
@@ -228,14 +242,15 @@ if run_scan:
     
     st.markdown("---")
     
-    col_tw, col_us, col_jp = st.columns(3)
-    markets_ui = [("台股", col_tw, "🇹🇼 台股戰情"), ("美股", col_us, "🇺🇸 美股戰情"), ("日股", col_jp, "🇯🇵 日股戰情")]
+    col_us, col_tw, col_jp = st.columns(3)
+    # 將美股移至最左側(第一順位)以凸顯核心戰略
+    markets_ui = [("美股", col_us, "🇺🇸 美股戰情 (Top 40)"), ("台股", col_tw, "🇹🇼 台股戰情"), ("日股", col_jp, "🇯🇵 日股戰情")]
     
     zones_to_display = [
-        ("ADD-ON", "🔥 加碼推背"), 
-        ("EXECUTE", "🎯 進入打擊"), 
-        ("EVACUATE", "⚠️ 風險撤退"),
-        ("WAIT", "👀 持平觀望(按兵不動)")
+        ("EXECUTE", "🎯 進入打擊 (VPA突破/回踩)"), 
+        ("HOLD", "🔥 波段續抱 (移動停利)"), 
+        ("EVACUATE", "⚠️ 大戶派發 / 破線撤退"),
+        ("WAIT", "👀 持平觀望 (無量整理)")
     ]
     
     for m_key, col, m_title in markets_ui:
@@ -250,7 +265,7 @@ if run_scan:
             for z_type, z_name in zones_to_display:
                 subset = [r for r in m_results if r['戰術'] == z_type]
                 if subset:
-                    with st.expander(f"{z_name} ({len(subset)})", expanded=(z_type != "WAIT")):
+                    with st.expander(f"{z_name} ({len(subset)})", expanded=(z_type == "EXECUTE" or z_type == "EVACUATE")):
                         for item in subset:
                             bg_color = ZONE_COLORS.get(z_type, "#FFFFFF")
                             
@@ -266,7 +281,6 @@ if run_scan:
                             """
                             st.markdown(html_card, unsafe_allow_html=True)
                             
-    # 💡 提示使用者哪些股票因為網路或 API 限制而漏抓
     if failed_symbols:
         failed_names = [NAME_MAP.get(s, s) for s in failed_symbols]
-        st.warning(f"⚠️ **網路延遲或 API 阻擋，以下 {len(failed_symbols)} 檔標的本次暫無數據：**\n{', '.join(failed_names)}\n\n*提示：系統已建立快取機制，您可以再次點擊「開始掃描」以補齊這些遺漏的標的。*")
+        st.warning(f"⚠️ **網路延遲，以下 {len(failed_symbols)} 檔標的本次暫無數據：**\n{', '.join(failed_names)}")
